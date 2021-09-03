@@ -1,0 +1,91 @@
+version: '3'
+
+volumes:
+    gitlab_config:
+    gitlab_logs:
+    gitlab_data:
+    sonarqube_conf:
+    sonarqube_data:
+    sonarqube_extensions:
+    sonar_postgresql:
+    sonar_postgresql_data:
+
+networks: 
+    sonar:
+    ci-net: #nom du réseau
+        driver: bridge # type de driver , bridge permet l'interconnexion entre conteneur et on peut y accéder de l'exterieur (il y a 3 type: bridge, host, none)
+        ipam:
+            config:
+                - subnet: 10.90.0.0/16 # plage d'ip dispo pour les conteneurs qu'on va plugge dessus
+
+
+services: #liste des services de notre DC
+    gitlab: # nom du service
+        #tous les paramètres du service
+        image: gitlab/gitlab-ce:13.1.4-ce.0 # choix de notre image
+        ports:
+            # port PC (in) : port conteneur
+            - "8080:80" #80 = port du conteneur http
+            - "9022:22" # SSH
+            - "443:433" # HTTPS
+            - "9000:9000" # runners
+        container_name: gitlab # on nomme le conteneur
+        restart: unless-stopped # le conteneur redemarre sauf si c'est une demande spé.
+        hostname: "gitlab" # correspond au nom de host du conteneur
+        environment: 
+            GITLAB_OMNIBUS_CONFIG: |
+                external_url 'http://gitlab:9000'
+                gitlab_rails['gitlab_shell_ssh_port'] = 22
+        volumes:
+            - gitlab_config:/etc/gitlab
+            - gitlab_logs:/var/log/gitlab
+            - gitlab_data:/var/opt/gitlab
+        networks:
+            ci-net:
+                ipv4_address: 10.90.0.6
+    runner1:
+        image: gitlab/gitlab-runner:latest
+        container_name: runner1
+        restart: unless-stopped
+        depends_on: #on fait dépendre un service d'un autre service
+            - gitlab
+        networks: 
+            ci-net:
+                ipv4_address: 10.90.0.45
+        volumes: 
+            # pour les utilisteurs linux et mac, le socket windows se situe dans : /var/run/docker.sock
+            # pour les user windows: //var/run/docker.sock
+            - /var/run/docker.sock://var/run/docker.sock:ro
+            - ./config/runner1:/etc/gitlab-runner # on récupère la configuration du runner
+    
+    sonar:
+        image: sonarqube:7.5-community
+        container_name: sonar
+        restart: unless-stopped
+        ports:
+            - 7000:9000
+        networks: 
+            sonar:
+            ci-net:
+                ipv4_address: 10.90.0.30
+        volumes: 
+            - sonarqube_conf:/opt/sonarqube/conf
+            - sonarqube_data:/opt/sonarqube/data
+            - sonarqube_extensions:/opt/sonarqube/extensions
+        environment: 
+            - sonar.jdbc.url=jdbc:postgresql://sonardb:5432/sonar
+        depends_on: 
+            - sonardb
+
+    sonardb:
+        image: postgres
+        container_name: sonardb
+        restart: unless-stopped
+        environment: 
+            - POSTGRES_USER=sonar
+            - POSTGRES_PASSWORD=sonar
+        volumes: 
+            - sonar_postgresql:/var/lib/postgresql
+            - sonar_postgresql_data:/var/lib/postgresql/data
+        networks: 
+            sonar:
